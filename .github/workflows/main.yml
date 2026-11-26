@@ -26,11 +26,11 @@ jobs:
         run: |
           cat > settings.gradle.kts <<'VENU_EOF'
           pluginManagement {
-              repositories { google(); mavenCentral(); gradlePluginPortal() }
+              repositories { google(); maven("https://maven-central.storage-download.googleapis.com/maven2/"); mavenCentral(); gradlePluginPortal() }
           }
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories { google(); mavenCentral() }
+              repositories { google(); maven("https://maven-central.storage-download.googleapis.com/maven2/"); mavenCentral() }
           }
           rootProject.name = "VENU-Network-Toolkit"
           include(":app")
@@ -146,6 +146,10 @@ jobs:
           import androidx.compose.ui.text.font.FontWeight
           import androidx.compose.ui.unit.dp
           import androidx.compose.ui.unit.sp
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import androidx.compose.foundation.horizontalScroll
+          import androidx.compose.ui.viewinterop.AndroidView
           import kotlinx.coroutines.Dispatchers
           import kotlinx.coroutines.launch
           import kotlinx.coroutines.withContext
@@ -160,11 +164,11 @@ jobs:
           import java.util.Collections
           import kotlin.math.pow
 
-          private val Navy = Color(0xFF081321)
-          private val Panel = Color(0xFF12243A)
-          private val Blue = Color(0xFF2589FF)
-          private val Muted = Color(0xFF9DB0C8)
-          private val Good = Color(0xFF39D98A)
+          val Navy = Color(0xFF081321)
+          val Panel = Color(0xFF12243A)
+          val Blue = Color(0xFF2589FF)
+          val Muted = Color(0xFF9DB0C8)
+          val Good = Color(0xFF39D98A)
 
           class MainActivity : ComponentActivity() {
               override fun onCreate(savedInstanceState: Bundle?) {
@@ -175,9 +179,10 @@ jobs:
 
           @Composable
           fun VenuApp(context: Context) {
-              val tabs = listOf("WiFi", "Ping", "Subnet", "Ports", "DNS", "Route", "Speed", "History")
+              val tabs = listOf("WiFi", "Monitor", "AI", "Ping", "Subnet", "Ports", "DNS", "Route", "Speed", "History")
               var selected by remember { mutableIntStateOf(0) }
               var history by remember { mutableStateOf(loadHistory(context)) }
+              val net = remember { NetState(context.applicationContext) }
               MaterialTheme(
                   colorScheme = darkColorScheme(
                       primary = Blue, secondary = Good, background = Navy, surface = Panel,
@@ -187,18 +192,27 @@ jobs:
                   Scaffold(
                       containerColor = Navy,
                       bottomBar = {
-                          NavigationBar(containerColor = Panel) {
-                              val icons = listOf(Icons.Default.Wifi, Icons.Default.NetworkPing, Icons.Default.Calculate,
-                                  Icons.Default.Router, Icons.Default.Dns, Icons.Default.Route, Icons.Default.Speed, Icons.Default.History)
+                          val icons = listOf(
+                              Icons.Default.Wifi, Icons.Default.Insights, Icons.Default.AutoAwesome,
+                              Icons.Default.NetworkPing, Icons.Default.Calculate, Icons.Default.Router,
+                              Icons.Default.Dns, Icons.Default.Route, Icons.Default.Speed, Icons.Default.History
+                          )
+                          Row(
+                              Modifier.fillMaxWidth().background(Panel).navigationBarsPadding()
+                                  .horizontalScroll(rememberScrollState())
+                          ) {
                               tabs.forEachIndexed { i, label ->
-                                  NavigationBarItem(
-                                      selected = selected == i,
-                                      onClick = { selected = i },
-                                      icon = { Icon(icons[i], contentDescription = label) },
-                                      label = { Text(label, fontSize = 9.sp) },
-                                      colors = NavigationBarItemDefaults.colors(selectedIconColor = Blue,
-                                          indicatorColor = Blue.copy(alpha = .18f), unselectedIconColor = Muted)
-                                  )
+                                  val on = selected == i
+                                  Column(
+                                      Modifier.clickable { selected = i }.padding(horizontal = 14.dp, vertical = 8.dp),
+                                      horizontalAlignment = Alignment.CenterHorizontally
+                                  ) {
+                                      Icon(icons[i], contentDescription = label, tint = if (on) Blue else Muted)
+                                      Text(
+                                          label, fontSize = 10.sp, color = if (on) Blue else Muted,
+                                          fontWeight = if (on) FontWeight.Bold else FontWeight.Normal
+                                      )
+                                  }
                               }
                           }
                       }
@@ -207,13 +221,15 @@ jobs:
                           Header()
                           when (selected) {
                               0 -> WifiScreen(context, onLog = { history = addHistory(context, it) })
-                              1 -> PingScreen(onLog = { history = addHistory(context, it) })
-                              2 -> SubnetScreen()
-                              3 -> PortScreen(onLog = { history = addHistory(context, it) })
-                              4 -> DnsScreen(onLog = { history = addHistory(context, it) })
-                              5 -> RouteScreen()
-                              6 -> SpeedScreen(onLog = { history = addHistory(context, it) })
-                              7 -> HistoryScreen(history, onClear = { clearHistory(context); history = emptyList() })
+                              1 -> MonitorScreen(net)
+                              2 -> AiScreen(net)
+                              3 -> PingScreen(onLog = { history = addHistory(context, it) })
+                              4 -> SubnetScreen()
+                              5 -> PortScreen(onLog = { history = addHistory(context, it) })
+                              6 -> DnsScreen(onLog = { history = addHistory(context, it) })
+                              7 -> RouteScreen()
+                              8 -> SpeedScreen()
+                              9 -> HistoryScreen(history, onClear = { clearHistory(context); history = emptyList() })
                           }
                       }
                   }
@@ -385,236 +401,4 @@ jobs:
                           }
                       }
                   }
-                  PanelCard { Text("PING OUTPUT", color = Blue, fontWeight = FontWeight.Bold, fontSize = 11.sp); ResultText(result) }
-              }
-          }
-
-          data class SubnetResult(val ip:String,val mask:String,val network:String,val broadcast:String,val first:String,val last:String,val count:Long,val wildcard:String)
-          fun ipToLong(s: String): Long {
-              val p = s.split(".")
-              require(p.size == 4) { "Enter a valid IPv4 address." }
-              val nums = p.map { it.toIntOrNull() ?: throw IllegalArgumentException("Invalid IPv4 octet.") }
-              require(nums.all { it in 0..255 }) { "IPv4 octets must be 0–255." }
-              return nums.fold(0L) { a, n -> (a shl 8) or n.toLong() }
-          }
-          fun longToIp(v: Long) = "${(v shr 24) and 255}.${(v shr 16) and 255}.${(v shr 8) and 255}.${v and 255}"
-          fun calculateSubnet(input: String): SubnetResult {
-              val bits = input.substringAfter("/", "24").toIntOrNull() ?: throw IllegalArgumentException("CIDR must be 0–32.")
-              require(bits in 0..32) { "CIDR must be between 0 and 32." }
-              val ip = input.substringBefore("/")
-              val value = ipToLong(ip)
-              val mask = if (bits == 0) 0L else (0xFFFFFFFFL shl (32 - bits)) and 0xFFFFFFFFL
-              val wildcard = mask xor 0xFFFFFFFFL
-              val network = value and mask
-              val broadcast = network or wildcard
-              val hosts = when (bits) { 32 -> 1L; 31 -> 2L; else -> (2.0.pow((32-bits).toDouble()).toLong() - 2).coerceAtLeast(0) }
-              val first = if (bits >= 31) network else network + 1
-              val last = if (bits >= 31) broadcast else broadcast - 1
-              return SubnetResult(ip,longToIp(mask),longToIp(network),longToIp(broadcast),longToIp(first),longToIp(last),hosts,longToIp(wildcard))
-          }
-
-          @Composable
-          fun SubnetScreen() {
-              var input by remember { mutableStateOf("192.168.1.10/24") }
-              var result by remember { mutableStateOf<SubnetResult?>(null) }
-              var error by remember { mutableStateOf("") }
-              Page {
-                  SectionTitle("Subnet Calculator", "IPv4, CIDR and network range calculator")
-                  PanelCard {
-                      Field(input, { input = it }, "IPv4 address / CIDR", "192.168.1.10/24")
-                      ActionButton("Calculate subnet") {
-                          try { result = calculateSubnet(input.trim()); error = "" }
-                          catch (e: Exception) { result = null; error = e.message ?: "Invalid input" }
-                      }
-                  }
-                  if (error.isNotBlank()) Text(error, color = Color(0xFFFF7373))
-                  result?.let { r -> PanelCard {
-                      Text("CALCULATION RESULT", color = Blue, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                      InfoRow("IP address", r.ip); InfoRow("Subnet mask", r.mask)
-                      InfoRow("Wildcard mask", r.wildcard); InfoRow("Network address", r.network)
-                      InfoRow("Broadcast address", r.broadcast); InfoRow("First usable", r.first)
-                      InfoRow("Last usable", r.last); InfoRow("Usable hosts", r.count.toString())
-                      InfoRow("CIDR", input.substringAfter("/", "24"))
-                  } }
-              }
-          }
-
-          @Composable
-          fun PortScreen(onLog: (String) -> Unit) {
-              val scope = rememberCoroutineScope()
-              var host by remember { mutableStateOf("192.168.1.1") }
-              var ports by remember { mutableStateOf("21,22,23,25,53,80,110,139,443,445,3389,8080") }
-              var output by remember { mutableStateOf("Scan only devices and systems you own or are authorized to test.") }
-              var busy by remember { mutableStateOf(false) }
-              Page {
-                  SectionTitle("Port Scanner", "Check selected TCP ports on an authorized host")
-                  PanelCard {
-                      Field(host, { host = it }, "Target IP / hostname")
-                      Field(ports, { ports = it }, "TCP ports (comma separated)")
-                      ActionButton(if (busy) "Scanning…" else "Start port scan", !busy) {
-                          busy = true
-                          scope.launch {
-                              output = withContext(Dispatchers.IO) {
-                                  try {
-                                      val list = ports.split(",").map { it.trim().toInt() }.distinct()
-                                      require(list.size <= 100 && list.all { it in 1..65535 }) { "Use up to 100 ports between 1 and 65535." }
-                                      list.map { p ->
-                                          val open = try { Socket().use { s -> s.connect(java.net.InetSocketAddress(host.trim(), p), 650); true } }
-                                          catch (_: Exception) { false }
-                                          "$p/tcp  ${if (open) "OPEN" else "Closed / filtered"}"
-                                      }.joinToString("\n")
-                                  } catch (e: Exception) { "Error: ${e.message}" }
-                              }
-                              busy = false; onLog("Port scan: $host")
-                          }
-                      }
-                  }
-                  PanelCard { ResultText(output) }
-              }
-          }
-
-          @Composable
-          fun DnsScreen(onLog: (String) -> Unit) {
-              val scope = rememberCoroutineScope()
-              var domain by remember { mutableStateOf("example.com") }
-              var output by remember { mutableStateOf("Query A, AAAA, MX, NS and TXT records.") }
-              var busy by remember { mutableStateOf(false) }
-              Page {
-                  SectionTitle("DNS Lookup", "Resolve common DNS record types")
-                  PanelCard {
-                      Field(domain, { domain = it }, "Domain name", "example.com")
-                      ActionButton(if (busy) "Looking up…" else "Lookup DNS", !busy) {
-                          busy = true
-                          scope.launch {
-                              output = withContext(Dispatchers.IO) {
-                                  try {
-                                      listOf("A","AAAA","MX","NS","TXT","CNAME").joinToString("\n\n") { type ->
-                                          val url = URL("https://dns.google/resolve?name=${domain.trim()}&type=$type")
-                                          val c = url.openConnection() as HttpURLConnection
-                                          c.connectTimeout = 7000; c.readTimeout = 7000
-                                          val json = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
-                                          val answers = json.optJSONArray("Answer")
-                                          val records = if (answers == null) "No records" else (0 until answers.length()).joinToString("\n") { answers.getJSONObject(it).optString("data") }
-                                          "$type:\n$records"
-                                      }
-                                  } catch (e: Exception) { "DNS lookup error: ${e.message}" }
-                              }
-                              busy = false; onLog("DNS lookup: $domain")
-                          }
-                      }
-                  }
-                  PanelCard { ResultText(output) }
-                  Text("DNS lookups use Google's public DNS-over-HTTPS service and require internet access.", color = Muted, fontSize = 11.sp)
-              }
-          }
-
-          @Composable
-          fun RouteScreen() {
-              val scope = rememberCoroutineScope()
-              var host by remember { mutableStateOf("google.com") }
-              var output by remember { mutableStateOf("Traceroute availability depends on the Android system image.") }
-              var busy by remember { mutableStateOf(false) }
-              Page {
-                  SectionTitle("Traceroute", "Inspect the route towards a destination")
-                  PanelCard {
-                      Field(host, { host = it }, "Destination hostname / IP")
-                      ActionButton(if (busy) "Tracing…" else "Start traceroute", !busy) {
-                          busy = true
-                          scope.launch {
-                              output = withContext(Dispatchers.IO) {
-                                  try {
-                                      val p = Runtime.getRuntime().exec(arrayOf("traceroute", "-m", "12", "-w", "1", host.trim()))
-                                      val text = p.inputStream.bufferedReader().use { it.readText() }
-                                      p.waitFor()
-                                      if (text.isBlank()) "Traceroute command is not available on this Android build. Use Ping or a dedicated traceroute utility." else text
-                                  } catch (_: Exception) { "Traceroute is not supported by this Android system image. This feature requires a traceroute binary or raw-socket support." }
-                              }
-                              busy = false
-                          }
-                      }
-                  }
-                  PanelCard { ResultText(output) }
-                  Text("Note: Some mobile networks and routers block traceroute probes.", color = Muted, fontSize = 11.sp)
-              }
-          }
-
-          @Composable
-          fun SpeedScreen(onLog: (String) -> Unit) {
-              val scope = rememberCoroutineScope()
-              var output by remember { mutableStateOf("Runs a small test against Cloudflare's public speed-test endpoint. Uses mobile/WiFi data.") }
-              var busy by remember { mutableStateOf(false) }
-              Page {
-                  SectionTitle("Speed Test", "Quick download and latency estimate")
-                  PanelCard {
-                      ActionButton(if (busy) "Testing…" else "Start speed test", !busy) {
-                          busy = true
-                          scope.launch {
-                              output = withContext(Dispatchers.IO) {
-                                  try {
-                                      val pingStart = System.nanoTime()
-                                      URL("https://www.cloudflare.com/cdn-cgi/trace").openConnection().getInputStream().use { it.readBytes() }
-                                      val latency = (System.nanoTime() - pingStart) / 1_000_000
-                                      val bytes = 5_000_000
-                                      val c = URL("https://speed.cloudflare.com/__down?bytes=$bytes").openConnection() as HttpURLConnection
-                                      c.connectTimeout = 12000; c.readTimeout = 20000
-                                      val start = System.nanoTime()
-                                      var total = 0L
-                                      c.inputStream.use { stream ->
-                                          val buffer = ByteArray(64 * 1024)
-                                          while (true) { val n = stream.read(buffer); if (n < 0) break; total += n }
-                                      }
-                                      val seconds = ((System.nanoTime() - start) / 1e9).coerceAtLeast(.001)
-                                      val mbps = total * 8 / seconds / 1_000_000
-                                      "Latency: ${latency} ms\nDownloaded: ${total / 1_000_000} MB\nEstimated download: ${"%.2f".format(mbps)} Mbps\n\nUpload speed is not measured in this lightweight build."
-                                  } catch (e: Exception) { "Speed test error: ${e.message}" }
-                              }
-                              busy = false; onLog("Speed test completed")
-                          }
-                      }
-                  }
-                  PanelCard { ResultText(output) }
-                  Text("Results vary with signal, server load and background traffic. The test downloads up to 5 MB.", color = Muted, fontSize = 11.sp)
-              }
-          }
-
-          @Composable
-          fun HistoryScreen(history: List<String>, onClear: () -> Unit) {
-              Page {
-                  SectionTitle("Scan History", "Recent tool activity stored on this phone")
-                  if (history.isEmpty()) Text("No history yet. Run a scan to create an entry.", color = Muted)
-                  history.forEach { PanelCard { ResultText(it) } }
-                  if (history.isNotEmpty()) OutlinedButton(onClick = onClear, modifier = Modifier.fillMaxWidth()) { Text("Clear history") }
-              }
-          }
-
-          @Composable
-          fun InfoRow(label: String, value: String) {
-              Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                  Text(label, color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                  Text(value, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1.2f))
-              }
-          }
-
-          fun loadHistory(context: Context): List<String> =
-              context.getSharedPreferences("venu_network", Context.MODE_PRIVATE).getString("history", "")!!
-                  .split("\n").filter { it.isNotBlank() }
-
-          fun addHistory(context: Context, entry: String): List<String> {
-              val updated = (listOf("${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())}  •  $entry") +
-                  loadHistory(context)).take(50)
-              context.getSharedPreferences("venu_network", Context.MODE_PRIVATE).edit().putString("history", updated.joinToString("\n")).apply()
-              return updated
-          }
-          fun clearHistory(context: Context) {
-              context.getSharedPreferences("venu_network", Context.MODE_PRIVATE).edit().remove("history").apply()
-          }
-          VENU_EOF
-
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: VENU-Network-Toolkit-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+                  PanelCard { Text("PING OUTPUT", color = Blue, fontWeight = FontWe
