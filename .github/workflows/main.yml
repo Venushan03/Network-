@@ -1,0 +1,620 @@
+name: Build VENU Network Toolkit APK
+
+on:
+  workflow_dispatch:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.10.2
+
+      - name: Generate project files
+        run: |
+          cat > settings.gradle.kts <<'VENU_EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "VENU-Network-Toolkit"
+          include(":app")
+          VENU_EOF
+
+          cat > build.gradle.kts <<'VENU_EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+              id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+          }
+          VENU_EOF
+
+          cat > gradle.properties <<'VENU_EOF'
+          org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          org.gradle.parallel=true
+          VENU_EOF
+
+          mkdir -p app
+          cat > app/build.gradle.kts <<'VENU_EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("org.jetbrains.kotlin.plugin.compose")
+          }
+
+          android {
+              namespace = "com.venu.networktoolkit"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.venu.networktoolkit"
+                  minSdk = 26
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0.0"
+              }
+
+              buildFeatures { compose = true }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+
+          dependencies {
+              implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+              implementation("androidx.activity:activity-compose:1.10.0")
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.ui:ui-tooling-preview")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.compose.material:material-icons-extended")
+              implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+              debugImplementation("androidx.compose.ui:ui-tooling")
+          }
+          VENU_EOF
+
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'VENU_EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+              <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+              <application
+                  android:allowBackup="true"
+                  android:label="VENU Network Toolkit"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                  android:usesCleartextTraffic="false"
+                  android:supportsRtl="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          VENU_EOF
+
+          mkdir -p app/src/main/java/com/venu/networktoolkit
+          cat > app/src/main/java/com/venu/networktoolkit/MainActivity.kt <<'VENU_EOF'
+          package com.venu.networktoolkit
+
+          import android.content.Context
+          import android.net.ConnectivityManager
+          import android.net.wifi.WifiManager
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.*
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
+          import org.json.JSONObject
+          import java.io.BufferedReader
+          import java.io.InputStreamReader
+          import java.net.HttpURLConnection
+          import java.net.InetAddress
+          import java.net.NetworkInterface
+          import java.net.Socket
+          import java.net.URL
+          import java.util.Collections
+          import kotlin.math.pow
+
+          private val Navy = Color(0xFF081321)
+          private val Panel = Color(0xFF12243A)
+          private val Blue = Color(0xFF2589FF)
+          private val Muted = Color(0xFF9DB0C8)
+          private val Good = Color(0xFF39D98A)
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent { VenuApp(this) }
+              }
+          }
+
+          @Composable
+          fun VenuApp(context: Context) {
+              val tabs = listOf("WiFi", "Ping", "Subnet", "Ports", "DNS", "Route", "Speed", "History")
+              var selected by remember { mutableIntStateOf(0) }
+              var history by remember { mutableStateOf(loadHistory(context)) }
+              MaterialTheme(
+                  colorScheme = darkColorScheme(
+                      primary = Blue, secondary = Good, background = Navy, surface = Panel,
+                      onPrimary = Color.White, onBackground = Color.White, onSurface = Color.White
+                  )
+              ) {
+                  Scaffold(
+                      containerColor = Navy,
+                      bottomBar = {
+                          NavigationBar(containerColor = Panel) {
+                              val icons = listOf(Icons.Default.Wifi, Icons.Default.NetworkPing, Icons.Default.Calculate,
+                                  Icons.Default.Router, Icons.Default.Dns, Icons.Default.Route, Icons.Default.Speed, Icons.Default.History)
+                              tabs.forEachIndexed { i, label ->
+                                  NavigationBarItem(
+                                      selected = selected == i,
+                                      onClick = { selected = i },
+                                      icon = { Icon(icons[i], contentDescription = label) },
+                                      label = { Text(label, fontSize = 9.sp) },
+                                      colors = NavigationBarItemDefaults.colors(selectedIconColor = Blue,
+                                          indicatorColor = Blue.copy(alpha = .18f), unselectedIconColor = Muted)
+                                  )
+                              }
+                          }
+                      }
+                  ) { padding ->
+                      Column(Modifier.fillMaxSize().padding(padding)) {
+                          Header()
+                          when (selected) {
+                              0 -> WifiScreen(context, onLog = { history = addHistory(context, it) })
+                              1 -> PingScreen(onLog = { history = addHistory(context, it) })
+                              2 -> SubnetScreen()
+                              3 -> PortScreen(onLog = { history = addHistory(context, it) })
+                              4 -> DnsScreen(onLog = { history = addHistory(context, it) })
+                              5 -> RouteScreen()
+                              6 -> SpeedScreen(onLog = { history = addHistory(context, it) })
+                              7 -> HistoryScreen(history, onClear = { clearHistory(context); history = emptyList() })
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun Header() {
+              Row(Modifier.fillMaxWidth().background(Navy).padding(horizontal = 18.dp, vertical = 14.dp),
+                  verticalAlignment = Alignment.CenterVertically) {
+                  Box(Modifier.size(42.dp).background(Blue, RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
+                      Icon(Icons.Default.Hub, null, tint = Color.White)
+                  }
+                  Spacer(Modifier.width(12.dp))
+                  Column(Modifier.weight(1f)) {
+                      Text("VENU", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
+                      Text("NETWORK TOOLKIT", color = Muted, fontSize = 10.sp, letterSpacing = 2.sp)
+                  }
+                  Text("PRO", color = Good, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+              }
+          }
+
+          @Composable
+          fun Page(content: @Composable ColumnScope.() -> Unit) {
+              Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+                  verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+          }
+
+          @Composable
+          fun SectionTitle(title: String, subtitle: String = "") {
+              Column {
+                  Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                  if (subtitle.isNotBlank()) Text(subtitle, color = Muted, fontSize = 12.sp)
+              }
+          }
+
+          @Composable
+          fun PanelCard(content: @Composable ColumnScope.() -> Unit) {
+              Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp),
+                  modifier = Modifier.fillMaxWidth()) {
+                  Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp), content = content)
+              }
+          }
+
+          @Composable
+          fun ActionButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
+              Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().height(49.dp),
+                  shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = Blue)) {
+                  Text(text, fontWeight = FontWeight.Bold)
+              }
+          }
+
+          @Composable
+          fun Field(value: String, onValue: (String) -> Unit, label: String, hint: String = "") {
+              OutlinedTextField(value, onValue, modifier = Modifier.fillMaxWidth(), label = { Text(label) },
+                  placeholder = { if (hint.isNotBlank()) Text(hint, color = Muted) },
+                  singleLine = true, colors = OutlinedTextFieldDefaults.colors(
+                      focusedBorderColor = Blue, unfocusedBorderColor = Muted.copy(alpha = .45f),
+                      focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                      focusedLabelColor = Blue, unfocusedLabelColor = Muted
+                  ))
+          }
+
+          @Composable
+          fun ResultText(text: String) {
+              Text(text, color = Color(0xFFE3EDF9), fontSize = 13.sp, lineHeight = 19.sp)
+          }
+
+          data class WifiInfoData(val ip: String, val gateway: String, val mask: String, val cidr: Int, val ssid: String)
+
+          fun wifiInfo(context: Context): WifiInfoData {
+              var ip = try {
+                  Collections.list(NetworkInterface.getNetworkInterfaces()).flatMap { Collections.list(it.inetAddresses) }
+                      .firstOrNull { !it.isLoopbackAddress && it is java.net.Inet4Address }?.hostAddress ?: "Unavailable"
+              } catch (_: Exception) { "Unavailable" }
+              var gateway = "Unavailable"
+              var ssid = "Unavailable"
+              var mask = "255.255.255.0"
+              var prefixLength = 24
+              try {
+                  val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                  @Suppress("DEPRECATION")
+                  val dhcp = wm.dhcpInfo
+                  if (dhcp.ipAddress != 0) ip = intToIp(dhcp.ipAddress)
+                  if (dhcp.gateway != 0) gateway = intToIp(dhcp.gateway)
+                  if (dhcp.netmask != 0) {
+                      mask = intToIp(dhcp.netmask)
+                      prefixLength = Integer.bitCount(dhcp.netmask)
+                  }
+                  @Suppress("DEPRECATION")
+                  val raw = wm.connectionInfo.ssid
+                  if (!raw.isNullOrBlank() && raw != "<unknown ssid>") ssid = raw.trim('"')
+              } catch (_: Exception) {}
+              val networkBase = try {
+                  longToIp(ipToLong(ip) and ipToLong(mask))
+              } catch (_: Exception) { "Unknown" }
+              return WifiInfoData(ip, gateway, mask, prefixLength, "$ssid|$networkBase")
+          }
+          fun intToIp(v: Int) = "${v and 255}.${v shr 8 and 255}.${v shr 16 and 255}.${v shr 24 and 255}"
+
+          @Composable
+          fun WifiScreen(context: Context, onLog: (String) -> Unit) {
+              val scope = rememberCoroutineScope()
+              val info = remember { wifiInfo(context) }
+              var scanning by remember { mutableStateOf(false) }
+              var devices by remember { mutableStateOf(listOf<String>()) }
+              val parts = info.ssid.split("|")
+              Page {
+                  SectionTitle("WiFi Scanner", "Discover responding devices on your connected LAN")
+                  PanelCard {
+                      Text("CURRENT NETWORK", color = Blue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                      InfoRow("WiFi / SSID", parts.firstOrNull() ?: "Unavailable")
+                      InfoRow("Local IP", info.ip)
+                      InfoRow("Gateway", info.gateway)
+                      InfoRow("Subnet", "${info.mask} /${info.cidr}")
+                      InfoRow("Network range", if (parts.size > 1) "${parts[1]} – ${parts[1].substringBeforeLast(".")}.254" else "Unavailable")
+                  }
+                  ActionButton(if (scanning) "Scanning LAN…" else "Scan my /24 network", !scanning && info.ip != "Unavailable") {
+                      scanning = true; devices = emptyList()
+                      scope.launch {
+                          val found = withContext(Dispatchers.IO) {
+                              val prefix = info.ip.substringBeforeLast(".", "")
+                              if (prefix.isBlank()) emptyList() else (1..254).mapNotNull { n ->
+                                  val host = "$prefix.$n"
+                                  try {
+                                      val addr = InetAddress.getByName(host)
+                                      if (addr.isReachable(350)) {
+                                          val name = try { addr.canonicalHostName.takeIf { it != host } ?: "Unknown host" }
+                                          catch (_: Exception) { "Unknown host" }
+                                          "$host  •  $name  •  Online"
+                                      } else null
+                                  } catch (_: Exception) { null }
+                              }
+                          }
+                          devices = found
+                          scanning = false
+                          onLog("LAN scan: ${found.size} responding device(s)")
+                      }
+                  }
+                  Text("Found devices: ${devices.size}", color = Color.White, fontWeight = FontWeight.Bold)
+                  if (devices.isEmpty()) Text("No results yet. Some devices block ping/ICMP, so a silent device may still be online.", color = Muted, fontSize = 12.sp)
+                  devices.forEach { PanelCard { ResultText(it) } }
+              }
+          }
+
+          fun pingHost(host: String): String {
+              require(host.isNotBlank()) { "Enter an IP address or hostname." }
+              val proc = Runtime.getRuntime().exec(arrayOf("ping", "-c", "4", "-W", "2", host))
+              val output = proc.inputStream.bufferedReader().use { it.readText() }
+              proc.waitFor()
+              return output.ifBlank { "Ping returned no output. The host may block ICMP." }
+          }
+
+          @Composable
+          fun PingScreen(onLog: (String) -> Unit) {
+              val scope = rememberCoroutineScope()
+              var host by remember { mutableStateOf("8.8.8.8") }
+              var result by remember { mutableStateOf("Enter a host and start ping.") }
+              var busy by remember { mutableStateOf(false) }
+              Page {
+                  SectionTitle("Ping Tool", "Measure reachability and round-trip latency")
+                  PanelCard {
+                      Field(host, { host = it }, "IP address / hostname", "192.168.1.1")
+                      ActionButton(if (busy) "Pinging…" else "Ping 4 packets", !busy) {
+                          busy = true
+                          scope.launch {
+                              result = withContext(Dispatchers.IO) { try { pingHost(host.trim()) } catch (e: Exception) { "Ping error: ${e.message}" } }
+                              busy = false; onLog("Ping $host")
+                          }
+                      }
+                  }
+                  PanelCard { Text("PING OUTPUT", color = Blue, fontWeight = FontWeight.Bold, fontSize = 11.sp); ResultText(result) }
+              }
+          }
+
+          data class SubnetResult(val ip:String,val mask:String,val network:String,val broadcast:String,val first:String,val last:String,val count:Long,val wildcard:String)
+          fun ipToLong(s: String): Long {
+              val p = s.split(".")
+              require(p.size == 4) { "Enter a valid IPv4 address." }
+              val nums = p.map { it.toIntOrNull() ?: throw IllegalArgumentException("Invalid IPv4 octet.") }
+              require(nums.all { it in 0..255 }) { "IPv4 octets must be 0–255." }
+              return nums.fold(0L) { a, n -> (a shl 8) or n.toLong() }
+          }
+          fun longToIp(v: Long) = "${(v shr 24) and 255}.${(v shr 16) and 255}.${(v shr 8) and 255}.${v and 255}"
+          fun calculateSubnet(input: String): SubnetResult {
+              val bits = input.substringAfter("/", "24").toIntOrNull() ?: throw IllegalArgumentException("CIDR must be 0–32.")
+              require(bits in 0..32) { "CIDR must be between 0 and 32." }
+              val ip = input.substringBefore("/")
+              val value = ipToLong(ip)
+              val mask = if (bits == 0) 0L else (0xFFFFFFFFL shl (32 - bits)) and 0xFFFFFFFFL
+              val wildcard = mask xor 0xFFFFFFFFL
+              val network = value and mask
+              val broadcast = network or wildcard
+              val hosts = when (bits) { 32 -> 1L; 31 -> 2L; else -> (2.0.pow((32-bits).toDouble()).toLong() - 2).coerceAtLeast(0) }
+              val first = if (bits >= 31) network else network + 1
+              val last = if (bits >= 31) broadcast else broadcast - 1
+              return SubnetResult(ip,longToIp(mask),longToIp(network),longToIp(broadcast),longToIp(first),longToIp(last),hosts,longToIp(wildcard))
+          }
+
+          @Composable
+          fun SubnetScreen() {
+              var input by remember { mutableStateOf("192.168.1.10/24") }
+              var result by remember { mutableStateOf<SubnetResult?>(null) }
+              var error by remember { mutableStateOf("") }
+              Page {
+                  SectionTitle("Subnet Calculator", "IPv4, CIDR and network range calculator")
+                  PanelCard {
+                      Field(input, { input = it }, "IPv4 address / CIDR", "192.168.1.10/24")
+                      ActionButton("Calculate subnet") {
+                          try { result = calculateSubnet(input.trim()); error = "" }
+                          catch (e: Exception) { result = null; error = e.message ?: "Invalid input" }
+                      }
+                  }
+                  if (error.isNotBlank()) Text(error, color = Color(0xFFFF7373))
+                  result?.let { r -> PanelCard {
+                      Text("CALCULATION RESULT", color = Blue, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                      InfoRow("IP address", r.ip); InfoRow("Subnet mask", r.mask)
+                      InfoRow("Wildcard mask", r.wildcard); InfoRow("Network address", r.network)
+                      InfoRow("Broadcast address", r.broadcast); InfoRow("First usable", r.first)
+                      InfoRow("Last usable", r.last); InfoRow("Usable hosts", r.count.toString())
+                      InfoRow("CIDR", input.substringAfter("/", "24"))
+                  } }
+              }
+          }
+
+          @Composable
+          fun PortScreen(onLog: (String) -> Unit) {
+              val scope = rememberCoroutineScope()
+              var host by remember { mutableStateOf("192.168.1.1") }
+              var ports by remember { mutableStateOf("21,22,23,25,53,80,110,139,443,445,3389,8080") }
+              var output by remember { mutableStateOf("Scan only devices and systems you own or are authorized to test.") }
+              var busy by remember { mutableStateOf(false) }
+              Page {
+                  SectionTitle("Port Scanner", "Check selected TCP ports on an authorized host")
+                  PanelCard {
+                      Field(host, { host = it }, "Target IP / hostname")
+                      Field(ports, { ports = it }, "TCP ports (comma separated)")
+                      ActionButton(if (busy) "Scanning…" else "Start port scan", !busy) {
+                          busy = true
+                          scope.launch {
+                              output = withContext(Dispatchers.IO) {
+                                  try {
+                                      val list = ports.split(",").map { it.trim().toInt() }.distinct()
+                                      require(list.size <= 100 && list.all { it in 1..65535 }) { "Use up to 100 ports between 1 and 65535." }
+                                      list.map { p ->
+                                          val open = try { Socket().use { s -> s.connect(java.net.InetSocketAddress(host.trim(), p), 650); true } }
+                                          catch (_: Exception) { false }
+                                          "$p/tcp  ${if (open) "OPEN" else "Closed / filtered"}"
+                                      }.joinToString("\n")
+                                  } catch (e: Exception) { "Error: ${e.message}" }
+                              }
+                              busy = false; onLog("Port scan: $host")
+                          }
+                      }
+                  }
+                  PanelCard { ResultText(output) }
+              }
+          }
+
+          @Composable
+          fun DnsScreen(onLog: (String) -> Unit) {
+              val scope = rememberCoroutineScope()
+              var domain by remember { mutableStateOf("example.com") }
+              var output by remember { mutableStateOf("Query A, AAAA, MX, NS and TXT records.") }
+              var busy by remember { mutableStateOf(false) }
+              Page {
+                  SectionTitle("DNS Lookup", "Resolve common DNS record types")
+                  PanelCard {
+                      Field(domain, { domain = it }, "Domain name", "example.com")
+                      ActionButton(if (busy) "Looking up…" else "Lookup DNS", !busy) {
+                          busy = true
+                          scope.launch {
+                              output = withContext(Dispatchers.IO) {
+                                  try {
+                                      listOf("A","AAAA","MX","NS","TXT","CNAME").joinToString("\n\n") { type ->
+                                          val url = URL("https://dns.google/resolve?name=${domain.trim()}&type=$type")
+                                          val c = url.openConnection() as HttpURLConnection
+                                          c.connectTimeout = 7000; c.readTimeout = 7000
+                                          val json = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+                                          val answers = json.optJSONArray("Answer")
+                                          val records = if (answers == null) "No records" else (0 until answers.length()).joinToString("\n") { answers.getJSONObject(it).optString("data") }
+                                          "$type:\n$records"
+                                      }
+                                  } catch (e: Exception) { "DNS lookup error: ${e.message}" }
+                              }
+                              busy = false; onLog("DNS lookup: $domain")
+                          }
+                      }
+                  }
+                  PanelCard { ResultText(output) }
+                  Text("DNS lookups use Google's public DNS-over-HTTPS service and require internet access.", color = Muted, fontSize = 11.sp)
+              }
+          }
+
+          @Composable
+          fun RouteScreen() {
+              val scope = rememberCoroutineScope()
+              var host by remember { mutableStateOf("google.com") }
+              var output by remember { mutableStateOf("Traceroute availability depends on the Android system image.") }
+              var busy by remember { mutableStateOf(false) }
+              Page {
+                  SectionTitle("Traceroute", "Inspect the route towards a destination")
+                  PanelCard {
+                      Field(host, { host = it }, "Destination hostname / IP")
+                      ActionButton(if (busy) "Tracing…" else "Start traceroute", !busy) {
+                          busy = true
+                          scope.launch {
+                              output = withContext(Dispatchers.IO) {
+                                  try {
+                                      val p = Runtime.getRuntime().exec(arrayOf("traceroute", "-m", "12", "-w", "1", host.trim()))
+                                      val text = p.inputStream.bufferedReader().use { it.readText() }
+                                      p.waitFor()
+                                      if (text.isBlank()) "Traceroute command is not available on this Android build. Use Ping or a dedicated traceroute utility." else text
+                                  } catch (_: Exception) { "Traceroute is not supported by this Android system image. This feature requires a traceroute binary or raw-socket support." }
+                              }
+                              busy = false
+                          }
+                      }
+                  }
+                  PanelCard { ResultText(output) }
+                  Text("Note: Some mobile networks and routers block traceroute probes.", color = Muted, fontSize = 11.sp)
+              }
+          }
+
+          @Composable
+          fun SpeedScreen(onLog: (String) -> Unit) {
+              val scope = rememberCoroutineScope()
+              var output by remember { mutableStateOf("Runs a small test against Cloudflare's public speed-test endpoint. Uses mobile/WiFi data.") }
+              var busy by remember { mutableStateOf(false) }
+              Page {
+                  SectionTitle("Speed Test", "Quick download and latency estimate")
+                  PanelCard {
+                      ActionButton(if (busy) "Testing…" else "Start speed test", !busy) {
+                          busy = true
+                          scope.launch {
+                              output = withContext(Dispatchers.IO) {
+                                  try {
+                                      val pingStart = System.nanoTime()
+                                      URL("https://www.cloudflare.com/cdn-cgi/trace").openConnection().getInputStream().use { it.readBytes() }
+                                      val latency = (System.nanoTime() - pingStart) / 1_000_000
+                                      val bytes = 5_000_000
+                                      val c = URL("https://speed.cloudflare.com/__down?bytes=$bytes").openConnection() as HttpURLConnection
+                                      c.connectTimeout = 12000; c.readTimeout = 20000
+                                      val start = System.nanoTime()
+                                      var total = 0L
+                                      c.inputStream.use { stream ->
+                                          val buffer = ByteArray(64 * 1024)
+                                          while (true) { val n = stream.read(buffer); if (n < 0) break; total += n }
+                                      }
+                                      val seconds = ((System.nanoTime() - start) / 1e9).coerceAtLeast(.001)
+                                      val mbps = total * 8 / seconds / 1_000_000
+                                      "Latency: ${latency} ms\nDownloaded: ${total / 1_000_000} MB\nEstimated download: ${"%.2f".format(mbps)} Mbps\n\nUpload speed is not measured in this lightweight build."
+                                  } catch (e: Exception) { "Speed test error: ${e.message}" }
+                              }
+                              busy = false; onLog("Speed test completed")
+                          }
+                      }
+                  }
+                  PanelCard { ResultText(output) }
+                  Text("Results vary with signal, server load and background traffic. The test downloads up to 5 MB.", color = Muted, fontSize = 11.sp)
+              }
+          }
+
+          @Composable
+          fun HistoryScreen(history: List<String>, onClear: () -> Unit) {
+              Page {
+                  SectionTitle("Scan History", "Recent tool activity stored on this phone")
+                  if (history.isEmpty()) Text("No history yet. Run a scan to create an entry.", color = Muted)
+                  history.forEach { PanelCard { ResultText(it) } }
+                  if (history.isNotEmpty()) OutlinedButton(onClick = onClear, modifier = Modifier.fillMaxWidth()) { Text("Clear history") }
+              }
+          }
+
+          @Composable
+          fun InfoRow(label: String, value: String) {
+              Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                  Text(label, color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                  Text(value, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1.2f))
+              }
+          }
+
+          fun loadHistory(context: Context): List<String> =
+              context.getSharedPreferences("venu_network", Context.MODE_PRIVATE).getString("history", "")!!
+                  .split("\n").filter { it.isNotBlank() }
+
+          fun addHistory(context: Context, entry: String): List<String> {
+              val updated = (listOf("${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())}  •  $entry") +
+                  loadHistory(context)).take(50)
+              context.getSharedPreferences("venu_network", Context.MODE_PRIVATE).edit().putString("history", updated.joinToString("\n")).apply()
+              return updated
+          }
+          fun clearHistory(context: Context) {
+              context.getSharedPreferences("venu_network", Context.MODE_PRIVATE).edit().remove("history").apply()
+          }
+          VENU_EOF
+
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VENU-Network-Toolkit-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
